@@ -1,49 +1,76 @@
 pipeline {
     agent any
+
     environment {
-        IMAGE_NAME = 'flask-app'
-        TARGET_PATH = '/opt/flask-app/deployments'
-        TARGET_HOST = 'user@target-machine'
+        // Replace with your actual SSH credentials ID from Jenkins
+        SSH_CREDENTIALS_ID = 'e9ccc7b7-6d94-4049-a3e4-5b1cb95c797e'
+        EC2_USERNAME = 'ec2-user'
+        EC2_HOST = '35.154.193.71'
+        GIT_REPO = 'https://github.com/saiusha30/flask-docker-jenkins'
+        GIT_BRANCH = 'main'
     }
+
     stages {
-        stage('Build') {
+        stage('Checkout Code') {
+            steps {
+                git branch: "${GIT_BRANCH}", url: "${GIT_REPO}"
+            }
+        }
+
+        stage('Build Docker Image') {
             steps {
                 script {
-                    sh 'docker build -t ${IMAGE_NAME} .'
+                    // Build the Docker image
+                    sh 'docker build -t flask-app .'
                 }
             }
         }
-        stage('Save Image') {
+
+        stage('Save Docker Image') {
             steps {
                 script {
-                    sh 'docker save ${IMAGE_NAME} | gzip > ${IMAGE_NAME}.tar.gz'
+                    // Save the Docker image to a file
+                    sh 'docker save flask-app | gzip > flask-app.tar.gz'
                 }
             }
         }
-        stage('Transfer Image') {
+
+        stage('Transfer Docker Image to EC2') {
             steps {
                 script {
-                    sshagent(['your-ssh-credentials-id']) {
-                        sh 'scp ${IMAGE_NAME}.tar.gz ${TARGET_HOST}:${TARGET_PATH}'
+                    // Use SSH agent to transfer the Docker image
+                    sshagent(credentials: [SSH_CREDENTIALS_ID]) {
+                        sh '''
+                        scp -o StrictHostKeyChecking=no flask-app.tar.gz ${EC2_USERNAME}@${EC2_HOST}:/home/${EC2_USERNAME}/
+                        '''
                     }
                 }
             }
         }
-        stage('Deploy') {
+
+        stage('Deploy Docker Image on EC2') {
             steps {
                 script {
-                    sshagent(['your-ssh-credentials-id']) {
-                        sh 'ssh ${TARGET_HOST} "gunzip -c ${TARGET_PATH}/${IMAGE_NAME}.tar.gz | docker load"'
-                        sh 'ssh ${TARGET_HOST} "docker run -d -p 5000:5000 ${IMAGE_NAME}"'
+                    // Use SSH to deploy the Docker image on EC2
+                    sshagent(credentials: [SSH_CREDENTIALS_ID]) {
+                        sh '''
+                        ssh -o StrictHostKeyChecking=no ${EC2_USERNAME}@${EC2_HOST} << 'EOF'
+                        docker load < /home/${EC2_USERNAME}/flask-app.tar.gz
+                        docker run -d -p 5000:5000 flask-app
+                        EOF
+                        '''
                     }
                 }
             }
         }
-    }
-    post {
-        always {
-            sh 'docker system prune -af'
+
+        stage('Clean up') {
+            steps {
+                script {
+                    // Clean up any unused Docker images and containers
+                    sh 'docker system prune -af'
+                }
+            }
         }
     }
 }
-
